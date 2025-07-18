@@ -6,7 +6,7 @@ The NHANES 2011 and 2013 cycles have released raw accelerometer data:
 
 NHANES is an excellent dataset because it is nationally representative (as long as survey weights are handled correctly 😄), free, and open access. Using these two cycles, you can generate some impactful papers ~~(Association between A and B among C / Prevalence and correlates of A among B / Trends in A among B)~~!
 
-However, the raw accelerometer data must be processed to produce meaningful results. While the CDC has already processed the raw files using the [MIMS-unit algorithm](https://mhealthgroup.github.io/MIMSunit/), I prefer working from scratch. Below is a step-by-step guide to processing these files.
+However, the raw accelerometer data must be processed to produce meaningful results. While the CDC has already processed the raw files using the [MIMS-unit algorithm](https://mhealthgroup.github.io/MIMSunit/), I prefer working from scratch. The main reason is that there is still no established cut-off for MIMS. (Yes, there is a paper proposing one, but it hasn't been validated.) Below is a step-by-step guide to processing these files.
 
 ---
 
@@ -55,8 +55,9 @@ Append all relevant CSV files (e.g., `GT3XPLUS-AccelerationCalibrated-[FIRMWARE_
 #### 3. Verify the append process
 Generate a log file to confirm the merging process went smoothly, ensuring no data was missed or corrupted. As you know, appending a large number of CSV files can be risky, and doing so on a server is even more precarious.
 
-For appending CSV files, there are several approaches. When working with high-frequency data (e.g., at the Hz level), I recommend using Linux. 
+For appending CSV files, there are several approaches. When working with high-frequency data (e.g., at the Hz level), I recommend using `bash`. 
 Why? Because Linux handles data processing efficiently and avoids issues with time or data formatting quirks.
+Using `data.table` in R is also a good option, but on our system, running R from the command line is inconvenient.
 
 ```bash
 bsub -G compute-snake -q general -R 'rusage[mem=8GB]' -a 'docker(eclipse/debian_jre)' bash mergeCSV.sh
@@ -143,7 +144,36 @@ After this step, you will have numerous large CSV files.
  These packages are like a Swiss Army knife ~~(NOT DNANEXUS)~~ for accelerometer researchers. Each package has its strengths, and you can choose based on your specific research needs.
 
 #### [GGIR](https://github.com/wadpac/GGIR)
-GGIR is a comprehensive tool for sleep, physical activity, and circadian rhythm analysis. The latest version (3.1.7) even outputs summarized event data. If you’re using the Verisense step count algorithm ~~(Remember to use V2 parameter)~~, you’ll get cadence.
+GGIR is a comprehensive tool for sleep, physical activity, and circadian rhythm analysis. 
+1. If you're interested in step count, I suggest using the Verisense V2. It does make a noticeable difference.
+2. For acceleration Metric, ENMO is fine since it has validated cut-off values. I know the Neishabouri(Actigraph) counts might be better, but I haven't found any validated cut-offs for them.
+3. Time zone settings don’t matter for this purpose. Daylight Saving Time (DST) may affect it, but there’s nothing we can do about that.
+4. You can merge light data (yes, even though it's aggregated to the second level) into the CSV file and it will be used for calibration, which is great. This approach works much better than relying on clipping alone.
+
+Here's my parameter
+```
+# All csv list
+allCsv <- list.files(path       = "[Your csv folder]",
+                     pattern    = "\\.csv$",
+                     full.names = TRUE)
+# Main
+GGIR(
+	datadir                  = allCsv,
+	rmc.nrow                 = Inf,
+	rmc.skip                 = 0,
+	rmc.dec                  = ".",
+	rmc.firstrow.acc         = 2,
+	rmc.col.acc              = 2:4,
+	rmc.col.time             = 1,
+	rmc.unit.acc             = "g", # Confirmed, it's g not bit not mg
+	desiredtz                = "America/Chicago", # Just pick one ...
+	rmc.unit.time            = "POSIX", # Has to be POSIX. If use char then SPT will be messed up (like the result from asleep)
+	rmc.format.time          = "%Y-%m-%d %H:%M:%OS", # Changed to OS however I don't think there's a difference 
+    rmc.dynamic_range        = 6, # https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2011/DataFiles/PAX80_G.htm, this is for clipping (unusual high acceleration)
+	rmc.sf                   = 80, #  Freq
+    ...
+    )
+```
 
 #### [mMARCH.AC](https://github.com/WeiGuoNIMH/mMARCH.AC)
 This now works with NHANES data (after a few edits—originally, it relied way too heavily on the Java-based `read.xlsx`, which was overkill). See [this](https://github.com/j262byuu/mMARCH.AC)
@@ -155,11 +185,12 @@ For physical activity-related research, I find the results from this package par
 This is an excellent package for step count analysis. Both SSL and RF algorithms perform well. I’ve found the step count results here to be reliable ~~(Comparing to Verisense step count algorithm)~~.
 
 #### [asleep](https://github.com/OxWearables/asleep)
-This package offers interesting results, but it can be resource-intensive. I recommend allocating at least 16 GB of memory per session to ensure smooth processing.
+This package offers interesting results, but it can be resource-intensive. I recommend allocating at least 16 GB of memory per session to ensure smooth processing. Also I ran into some problems with this package since it gave me some pretty strange results.
 
 #### [TLBC](https://github.com/cran/TLBC)
 This package can be used to process NHANES data. While you can’t download the trained models, you can use [CAPTURE-24](https://github.com/OxWearables/capture24)
 
+#### [refund](https://cran.r-project.org/web/packages/refund/index.html)
+This package is used for functional data analysis (in plain language: it extracts patterns and assigns them into groups). Although ~~everything in this world can be classified into three groups: up, down, or stable~~, this is still an awesome package. I recommend using `refund::mfpca.face` because it accounts for NHANES’s multiday measurement protocol and is CRAZY fast without sacrificing accuracy.
+
 # If you have any questions or would like access to the processed data (it’s way too large to upload to GitHub), feel free to contact me on LinkedIn!
-
-
